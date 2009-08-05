@@ -3,6 +3,9 @@ require File.join(File.dirname(__FILE__),'spec_helper')
 # typicality of combined apache log
 $normal_load_log = '127.0.0.1 - - [25/Sep/2008:08:48:38 +0900] "GET /index.html HTTP/1.1" 200 45 "http://localhost/sample.html" "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)"'
 
+# typicality of combined apache log
+$normal_load_log_tsv = '127.0.0.1	-	-	[25/Sep/2008:08:48:38 +0900]	"GET /index.html HTTP/1.1"	200	45	"http://localhost/sample.html"	"Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)"'
+
 # example logs for parsing difficulty
 # http://d.hatena.ne.jp/edry/20080925
 $rough_road_log = <<'END'
@@ -49,12 +52,19 @@ END
 
 
 describe :apache_log do
+	describe :combined do
+		it "should create with no argument" do
+			a = Apache::Log::Combined.new
+			a.should_not be_nil
+		end
+	end
+
 	it "should throw ArgumentError less than 11 args" do
-		lambda{ Apache::Log::Combine.new( [ 1, 2 ] ) }.should raise_error( ArgumentError )
+		lambda{ Apache::Log::Combined.new( [ 1, 2 ] ) }.should raise_error( ArgumentError )
 	end
 
 	it "should be able to parse for typicality of combined apache log" do
-		parsed = Apache::Log::Combine.parse( $normal_load_log )
+		parsed = Apache::Log::Combined.parse( $normal_load_log )
 		parsed[0].should == "127.0.0.1"
 		parsed[1].should == "-"
 		parsed[2].should == "-"
@@ -82,12 +92,12 @@ describe :apache_log do
 	end
 
 	it "should make combined apache log" do
-		parsed = Apache::Log::Combine.parse( $normal_load_log )
+		parsed = Apache::Log::Combined.parse( $normal_load_log )
 		parsed.to_s.should == $normal_load_log
 	end
 
 	it "should allow appendix" do
-		parsed = Apache::Log::Combine.parse( $normal_load_log + " aaa bbb" )
+		parsed = Apache::Log::Combined.parse( $normal_load_log + " aaa bbb" )
 		parsed[0].should == "127.0.0.1"
 		parsed[1].should == "-"
 		parsed[2].should == "-"
@@ -116,17 +126,45 @@ describe :apache_log do
 	end
 
 	it "should make combined apache log with appendix" do
-		parsed = Apache::Log::Combine.parse( $normal_load_log + " aaa bbb" )
+		parsed = Apache::Log::Combined.parse( $normal_load_log + " aaa bbb" )
 		parsed.to_s.should == $normal_load_log + " aaa bbb"
 	end
 
+	it "should allow appendix on tsv" do
+		parsed = Apache::Log::Combined.parse( $normal_load_log_tsv + "	aaa	bbb", :tab )
+		parsed[0].should == "127.0.0.1"
+		parsed[1].should == "-"
+		parsed[2].should == "-"
+		parsed[3].should == "25/Sep/2008:08:48:38 +0900"
+		parsed[4].should == "GET"
+		parsed[5].should == "/index.html"
+		parsed[6].should == "HTTP/1.1"
+		parsed[7].should == "200"
+		parsed[8].should == "45"
+		parsed[9].should == "http://localhost/sample.html"
+		parsed[10].should == "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)"
+		parsed[11].should == "aaa	bbb"
+
+		parsed.remote_ip.should == "127.0.0.1"
+		parsed.ident.should     == nil
+		parsed.user.should      == nil
+		parsed.time.utc.should  == Time.utc( 2008, 9, 24, 23, 48, 38 )
+		parsed.method.should    == "GET"
+		parsed.path.should      == "/index.html"
+		parsed.protocol.should  == "HTTP/1.1"
+		parsed.status.should    == 200
+		parsed.size.should      == 45
+		parsed.referer.should   == "http://localhost/sample.html"
+		parsed.agent.should     == "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)"
+		parsed.appendix.should  == "aaa	bbb"
+	end
 
 	$rough_road_log.lines.each_with_index { |tsv_line, i|
 	  it "should be able to parse space delimitted log format:#{i+1}" do
 				tsv_line.strip!
 				prepared = tsv_line.split( "\t" )
 				line = prepared.join " "
-				parsed = Apache::Log::Combine.parse( line )
+				parsed = Apache::Log::Combined.parse( line ).dup
 				prepared[3] = prepared[3][1...-1]
 				prepared[4] = prepared[4][1...-1]
 				prepared[7] = prepared[7][1...-1]
@@ -141,7 +179,7 @@ describe :apache_log do
 				tsv_line.strip!
 				prepared = tsv_line.split( "\t" )
 				line = tsv_line
-				parsed = Apache::Log::Combine.parse( line, :tab )
+				parsed = Apache::Log::Combined.parse( line, :tab ).dup
 				prepared[3] = prepared[3][1...-1]
 				prepared[4] = prepared[4][1...-1]
 				prepared[7] = prepared[7][1...-1]
@@ -150,4 +188,46 @@ describe :apache_log do
 				parsed.should == prepared
 	  end
 	}
+
+	describe :LogFile do
+		describe :read do
+			it "should read all lines" do
+				logs = Apache::LogFile.read( "spec/test.log" )
+				logs.size.should == 2
+			end
+
+			it "should support only combined log format yet" do
+				lambda { Apache::LogFile.read( "spec/test.log", :format => :combined ) }.should_not raise_error( ArgumentError )
+				lambda { Apache::LogFile.read( "spec/test.log", :format => :common ) }.should raise_error( ArgumentError )
+			end
+		end
+
+		describe :foreach do
+			it "should read each line" do
+				i = 0
+				logs = Apache::LogFile.foreach( "spec/test.log" ) { |x|
+					i += 1
+					x.class.should == Apache::Log::Combined
+				}
+				i.should == 2
+			end
+
+			describe "for tsv log" do
+				it "should read each line" do
+					i = 0
+					logs = Apache::LogFile.foreach( "spec/test_tsv.log", :tab ) { |x|
+						i += 1
+						x.class.should == Apache::Log::Combined
+					}
+					i.should == 2
+				end
+			end
+		end
+	end
+
+	describe "io parser" do
+		it "should read file and parsing" do
+			Apache::Log::Combined.parse_io( "a" )
+		end
+	end
 end
