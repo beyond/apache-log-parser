@@ -1,10 +1,12 @@
 # ApacheLog
 require "active_support"
+require "time"
 
 module Apache
 	LogFormats = {
 		:combined => %r'^(.*?) (.*?) (.*) \[(.*?)\] "(.*?)(?:\s+(.*?)\s+(\S*?))?" (.*?) (.*?) "(.*?)" "(.*?)"(?: (.*))?$',
-		:path => %r'^"(.*?)(?:\s+(.*?)\s+(\S*?))?"$'
+		:path => %r'^"(.*?)(?:\s+(.*?)\s+(\S*?))?"$',
+		:time => %r"(\d+)\/([A-Z][a-z][a-z])\/(\d+):(\d+):(\d+):(\d+)( ([\+-])(\d\d)(\d\d))?"
 	}
 
 	module Log
@@ -35,7 +37,6 @@ module Apache
 
 			def time
 				unless @time
-					require "time"
 					t = self[3].dup
 					t[11] = " "
 					@time = Time.parse( t )
