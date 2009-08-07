@@ -1,13 +1,17 @@
 # ApacheLog
 require "active_support"
-require "time"
 
 module Apache
 	LogFormats = {
 		:combined => %r'^(.*?) (.*?) (.*) \[(.*?)\] "(.*?)(?:\s+(.*?)\s+(\S*?))?" (.*?) (.*?) "(.*?)" "(.*?)"(?: (.*))?$',
 		:path => %r'^"(.*?)(?:\s+(.*?)\s+(\S*?))?"$',
-		:time => %r"(\d+)\/([A-Z][a-z][a-z])\/(\d+):(\d+):(\d+):(\d+)( ([\+-])(\d\d)(\d\d))?"
+		:date => %r"^(.*?)\/(.*?)\/(.*?):(.*?):(.*?):(.*?)( ([\+-])(\d\d)(\d\d))?$"
 	}
+
+	Month = { "Jan" => 1, "Feb" => 2, "Mar" => 3, "Apr" => 4,
+						"May" => 5, "Jun" => 6, "Jul" => 7, "Aug" => 8,
+						"Sep" => 9, "Oct" => 10, "Nov" => 11, "Dec" => 12
+					}
 
 	module Log
 		class Combined < Array
@@ -15,7 +19,7 @@ module Apache
 			attr_accessor :method, :protocol, :referer, :agent, :appendix
 
 			def initialize( args=nil )
-				return unless args
+				return if args.blank?
 
 				raise ArgumentError.new( "wrong number of arguments (#{args.size} for over 11)" ) if args.size < 11
 				if args.last
@@ -33,15 +37,44 @@ module Apache
 				@agen    = nil if @agent == "-"
 				@status = @status == "-" ? nil : @status.to_i
 				@size = @size == "-" ? nil : @size.to_i
+				if timestr.class == String
+					@time = parse_time( timestr )
+				else
+					@time = timestr
+				end
 			end
 
-			def time
-				unless @time
-					t = self[3].dup
-					t[11] = " "
-					@time = Time.parse( t )
+			def to_a
+				result = [
+					remote_ip,
+					ident,
+					user,
+					time,
+					method,
+					path,
+					protocol,
+					status,
+					size,
+					referer,
+					agent,
+				]
+				result << appendix if appendix
+				result
+			end
+
+			def parse_time( timestr )
+				if timestr =~ LogFormats[ :date ]
+					time = Time.gm( $3.to_i, Month[ $2 ], $1.to_i, $4.to_i, $5.to_i, $6.to_i )
+
+					if $8 == '+'
+						time -=  $9.to_i * 60 * 60
+						time -= $10.to_i * 60
+					elsif $8 == '-'
+						time +=  $9.to_i * 60 * 60
+						time += $10.to_i * 60
+					end
+					time
 				end
-				@time
 			end
 
 			class <<self
@@ -87,44 +120,4 @@ module Apache
 		end
 	end
 
-	class LogFile
-		def open( *args, &block )
-			a = LogFile.new( args )
-			block.call( a ) if block
-		end
-
-		class <<self
-			def read( *args )
-				result = []
-				foreach( *args ) { |x|
-					result << x
-				}
-	
-				result
-			end
-
-			def foreach( *args )
-				options = args.extract_options!
-				fname = args[0]
-				delimiter = args[1] || :space
-				format = options[ :format ] || :combined
-				if format == :combined
-					format = Apache::Log::Combined
-				else
-					raise ArgumentError.new( "Invalid log format" )
-				end
-
-				File.foreach( fname ) { |line|
-					line.chomp!
-					log = format.parse( line, delimiter )
-					yield log if log
-				}
-
-				self
-			end
-		end
-
-		def read
-		end
-	end
 end
